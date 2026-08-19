@@ -1,0 +1,69 @@
+{
+  "name": "victronble",
+  "version": "0.6.1",
+  "description": "Portable Arduino library for reading Victron Energy device data via Bluetooth Low Energy (BLE) advertisements. Runs on ESP32, ESP32-S3, ESP32-C3, nRF52 (nRF52840, nRF52832) and Arduino MKR WiFi 1010 (via ArduinoBLE). Supports SmartSolar MPPT, SmartShunt, BMV, MultiPlus, Orion, Blue Smart AC chargers and other Victron devices. No external crypto dependency.",
+  "keywords": "victron, ble, bluetooth, solar, mppt, battery, smartshunt, smartsolar, bmv, inverter, multiplus, esp32, esp32-s3, esp32-c3, nrf52, nrf52840, nrf52832, xiao, mkr, mkrwifi1010, samd, iot, energy, monitoring",
+  "repository": {
+    "type": "git",
+    "url": "https://gitea.sh3d.com.au/Sh3d/VictronBLE.git"
+  },
+  "authors": [
+    {
+      "name": "Scott Penrose",
+      "email": "scottp@dd.com.au",
+      "url": "https://gitea.sh3d.com.au/Sh3d",
+      "maintainer": true
+    }
+  ],
+  "license": "MIT",
+  "homepage": "https://gitea.sh3d.com.au/Sh3d/VictronBLE",
+  "frameworks": ["arduino", "espidf"],
+  "platforms": ["espressif32", "nordicnrf52", "atmelsam"],
+  "headers": ["VictronBLE.h"],
+  "dependencies": [
+    {
+      "owner": "arduino-libraries",
+      "name": "ArduinoBLE",
+      "version": "^2.1.0",
+      "platforms": "atmelsam"
+    }
+  ],
+  "examples": [
+    {
+      "name": "MultiDevice",
+      "base": "examples/MultiDevice",
+      "files": ["src/main.cpp"]
+    },
+    {
+      "name": "Logger",
+      "base": "examples/Logger",
+      "files": ["src/main.cpp"]
+    },
+    {
+      "name": "Repeater",
+      "base": "examples/Repeater",
+      "files": ["src/main.cpp"]
+    },
+    {
+      "name": "Receiver",
+      "base": "examples/Receiver",
+      "files": ["src/main.cpp"]
+    },
+    {
+      "name": "FakeRepeater",
+      "base": "examples/FakeRepeater",
+      "files": ["src/main.cpp"]
+    }
+  ],
+  "export": {
+    "exclude": [
+      "examples/*/.pio",
+      "examples/*/.vscode",
+      "examples/*/test",
+      "test",
+      "tests",
+      ".git",
+      ".gitignore"
+    ]
+  }
+}
