@@ -10,6 +10,12 @@
 #include <NMEA2000_CAN.h>  // This will automatically choose right CAN library and create suitable NMEA2000 object
 #include <N2kMessages.h>
 
+// Set to 1 to print every message's values to Serial right after they're
+// sent on the bus - lets you sanity-check readings without a live NMEA 2000
+// bus connected. Set to 0 for silent operation; the prints below compile
+// out entirely rather than becoming no-ops.
+#define DEBUG_SERIAL_PRINT 1
+
 // List here messages your device will transmit.
 const unsigned long TransmitMessages[] PROGMEM = { 130316L, 130311L, 130314L, 127508L, 0 };
 
@@ -101,6 +107,11 @@ SidTracker VictronSid;
 Sensor *Sensors[] = { &bmp, &outsideTemp, &victronBattery };
 const uint8_t SensorCount = sizeof(Sensors) / sizeof(Sensors[0]);
 
+// Names matching Sensors[] above, index-for-index. Temporary - only for the
+// setup() failure print below, to see which sensor triggers ErrorLoop() over
+// serial before the reset wipes the cause.
+const char *SensorNames[] = { "BMP280", "DS18B20 (outside temp)", "Victron BLE" };
+
 // ********************** Status LED **************************
 // Heartbeat while running normally: 1 s on, 1 s off. Non-blocking (millis()
 // based) so it never stalls NMEA2000.ParseMessages(). ErrorLoop() below
@@ -153,9 +164,25 @@ void nmeaInit() {
 void setup() {
   pinMode(LED_BUILTIN, OUTPUT);
   Serial.begin(115200);
+  while (!Serial) { 
+    delay(100);
+  } //wait until ready
+  Serial.println("Arduino MKR Boat Sensors");
+  
+  #if DEBUG_SERIAL_PRINT
+  Serial.println("DEBUG ON");
+  #endif 
 
   for (uint8_t i = 0; i < SensorCount; i++) {
-    if (!Sensors[i]->setup()) ErrorLoop();
+    if (!Sensors[i]->setup()) {
+      
+      #if DEBUG_SERIAL_PRINT
+      Serial.print("[ErrorLoop] setup() failed for sensor: ");
+      Serial.println(SensorNames[i]);
+      #endif
+
+      ErrorLoop();
+    }
   }
 
   nmeaInit();
@@ -175,13 +202,6 @@ void loop() {
   SendN2kMessages();  //send it NMEA bus various message on different schedule.
   NMEA2000.ParseMessages();
 }
-
-
-// Set to 1 to print every message's values to Serial right after they're
-// sent on the bus - lets you sanity-check readings without a live NMEA 2000
-// bus connected. Set to 0 for silent operation; the prints below compile
-// out entirely rather than becoming no-ops.
-#define DEBUG_SERIAL_PRINT 1
 
 #if DEBUG_SERIAL_PRINT
 // N2kDoubleNA is a sentinel (-1e9), not NaN, so print "N/A" instead of the
@@ -212,6 +232,7 @@ void SendN2kMessages() {
     TemperatureScheduler.UpdateNextTime();
     SetN2kTemperatureExt(N2kMsg, BmpSid.sid(), 1, N2kts_MainCabinTemperature, cabinTemp);
     NMEA2000.SendMsg(N2kMsg);
+
 #if DEBUG_SERIAL_PRINT
     Serial.print("[130316 MainCabinTemperature] SID=");
     Serial.print(BmpSid.sid());
@@ -280,11 +301,14 @@ void SendN2kMessages() {
 }
 
 void ErrorLoop() {
+  #if DEBUG_SERIAL_PRINT
+  Serial.println("Error in setup. reboot in 20 seconds");
+  #endif
   // Fast blink (100 ms on/off) then reboot rather than hang forever - for an
   // unattended sensor on a boat, rebooting beats going dark. This is the one
   // place the LED blocks: the device is about to reset, so there is no
   // NMEA2000.ParseMessages() left to stall.
-  for (uint8_t i = 0; i < 9; i++) {
+  for (uint8_t i = 0; i < 100; i++) {
     digitalWrite(LED_BUILTIN, HIGH);
     delay(100);
     digitalWrite(LED_BUILTIN, LOW);
