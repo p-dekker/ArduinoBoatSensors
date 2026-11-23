@@ -24,7 +24,9 @@
 // to know the 1-Wire library exists - the same isolation BmpSensor.h uses
 // for Adafruit_BMP280.
 //
-// Assumes a single DS18x20-family device on the bus (reads by index 0).
+// Assumes a single DS18x20-family device on the bus: begin() looks up the
+// first device's ROM address once, and every read then goes to that address
+// directly instead of re-searching the bus by index.
 
 #ifndef DS_SENSOR_H
 #define DS_SENSOR_H
@@ -98,6 +100,7 @@ class DsSensor : public Sensor {
   DallasTemperature *_sensors;
 
   uint8_t _pin;
+  uint8_t _address[8];  // 64-bit ROM code, same layout as DallasTemperature's DeviceAddress
   uint32_t _updateIntervalMs;
   uint32_t _staleTimeoutMs;
   uint32_t _conversionDelayMs;

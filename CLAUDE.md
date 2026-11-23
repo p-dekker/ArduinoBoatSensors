@@ -32,6 +32,16 @@ MKR WiFi 1010's SAMD21 has no BLE radio of its own. Re-vendor from that repo
 (`git archive <branch> | tar -x -C libraries/VictronBLE`) if it gets updated,
 not by hand-editing the copy here.
 
+**One deliberate local patch in `libraries/CAN_BUS_Shield-master`:**
+`mcp_can.cpp`'s `SPI_BEGIN()` macro is changed from `SPISettings(10000000, …)`
+to `SPISettings(8000000, …)`. On the SAMD21 a 10 MHz request rounds up to
+12 MHz (48 MHz / 4), above the MCP2515's 10 MHz SPI limit: every register
+read comes back shifted one bit, `MCP_CAN::begin()` returns `CAN_FAILINIT`,
+and the sketch prints `CAN device failed to open` forever. Verified on the
+MKR CAN Shield with a probe sketch: clean reads at 1/4/8 MHz, garbled at
+10 MHz. The library has no hook to set the speed, hence the patch. If this
+library is ever re-vendored, re-apply this one-line change.
+
 ### The `Sensor` interface
 
 `libraries/Sensor/src/Sensor.h` declares just `virtual bool setup() = 0;` and
@@ -124,11 +134,13 @@ conversion time before reading back. The only place `DsSensor` blocks is once,
 synchronously, inside `setup()`, to prime `isValid()` before the sketch's
 `loop()` starts.
 
-**`getTempCByIndex()` also lies, differently than the BMP280 does.** It
+**`getTempC()` also lies, differently than the BMP280 does.** It
 returns `DEVICE_DISCONNECTED_C` (-127 °C) on a failed read instead of throwing
 or blocking. That value is already outside the DS18B20 datasheet range
 (-55…+125 °C), so `DsSensor`'s plausibility check catches it as a side effect
-— no separate sentinel comparison needed.
+— no separate sentinel comparison needed. `DsSensor` reads by the ROM address
+it caches in `begin()`, not `getTempCByIndex()`, which would redo a full
+1-Wire bus search on every read.
 
 ## Conventions
 
