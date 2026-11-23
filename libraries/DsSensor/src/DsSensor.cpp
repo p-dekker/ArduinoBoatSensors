@@ -4,7 +4,7 @@
 #include <DallasTemperature.h>
 
 // DS18B20 datasheet operating range, used to sanity-check readings.
-// getTempCByIndex() returns DEVICE_DISCONNECTED_C (-127) on a failed read,
+// getTempC() returns DEVICE_DISCONNECTED_C (-127) on a failed read,
 // which already falls well outside this range, so the same plausibility
 // check that catches a genuinely out-of-range reading catches a
 // disconnected sensor too - no separate sentinel check needed.
@@ -18,6 +18,7 @@ DsSensor::DsSensor(uint8_t pin, uint32_t updateIntervalMs, uint32_t staleTimeout
     : _oneWire(NULL),
       _sensors(NULL),
       _pin(pin),
+      _address(),
       _updateIntervalMs(updateIntervalMs),
       _staleTimeoutMs(staleTimeoutMs),
       _conversionDelayMs(0),
@@ -52,7 +53,10 @@ bool DsSensor::begin() {
   }
 
   _sensors->begin();
-  _present = _sensors->getDeviceCount() > 0;
+  // Look the ROM address up once here, so finishConversion() can read the
+  // device directly - getTempCByIndex() would re-run a full 1-Wire bus
+  // search on every read just to find the same device again.
+  _present = _sensors->getDeviceCount() > 0 && _sensors->getAddress(_address, 0);
   if (!_present) return false;
 
   _failures = 0;
@@ -103,7 +107,7 @@ void DsSensor::startConversion() {
 bool DsSensor::finishConversion() {
   _converting = false;
 
-  const double temperatureK = (double)_sensors->getTempCByIndex(0) + 273.15;
+  const double temperatureK = (double)_sensors->getTempC(_address) + 273.15;
 
   const bool plausible = !isnan(temperatureK) &&
                          temperatureK >= MinTemperatureK &&

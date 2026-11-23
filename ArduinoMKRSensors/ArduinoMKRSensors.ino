@@ -7,14 +7,17 @@
 #include <DsSensor.h>        // outside-temperature DS18B20, same isolation as BmpSensor.h
 #include <VictronBleSensor.h>  // Victron BLE battery monitor (SmartShunt), same shape as BmpSensor.h
 
+// MKR CAN bus shield's CS pin. Must be defined before including NMEA2000_CAN.h,
+// which otherwise silently defaults to pin 53 (an Arduino Mega pin number,
+// meaningless on a MKR board) - see NMEA2000_CAN.h's generic MCP_CAN branch.
+#define N2k_SPI_CS_PIN 3
+// MKR CAN shield's MCP2515 INT line. With it, the library drains the chip's
+// two hardware RX buffers from an interrupt into a software ring buffer, so
+// frames are not lost while loop() is blocked (e.g. the BMP280's forced read).
+// Without it, frames are only read when ParseMessages() gets to poll.
+#define N2k_CAN_INT_PIN 7
 #include <NMEA2000_CAN.h>  // This will automatically choose right CAN library and create suitable NMEA2000 object
 #include <N2kMessages.h>
-
-// Set to 1 to print every message's values to Serial right after they're
-// sent on the bus - lets you sanity-check readings without a live NMEA 2000
-// bus connected. Set to 0 for silent operation; the prints below compile
-// out entirely rather than becoming no-ops.
-#define DEBUG_SERIAL_PRINT 1
 
 // List here messages your device will transmit.
 const unsigned long TransmitMessages[] PROGMEM = { 130316L, 130311L, 130314L, 127508L, 0 };
@@ -40,7 +43,7 @@ void OnN2kOpen() {
   EnvironmentalScheduler.UpdateNextTime();
   PressureScheduler.UpdateNextTime();
   OutsideTemperatureScheduler.UpdateNextTime();
-  BatteryVoltageScheduler.UpdateNextTime();
+  // BatteryVoltageScheduler.UpdateNextTime();
 }
 
 // SID bookkeeping is NMEA 2000-specific (not part of the Sensor interface,
@@ -104,13 +107,8 @@ SidTracker VictronSid;
 // All sensors driven generically from setup()/loop() below. Add a new
 // sensor by making it `: public Sensor` and adding it to this array - no
 // other change to setup()/loop() needed.
-Sensor *Sensors[] = { &bmp, &outsideTemp, &victronBattery };
+Sensor *Sensors[] = { &bmp, &outsideTemp};
 const uint8_t SensorCount = sizeof(Sensors) / sizeof(Sensors[0]);
-
-// Names matching Sensors[] above, index-for-index. Temporary - only for the
-// setup() failure print below, to see which sensor triggers ErrorLoop() over
-// serial before the reset wipes the cause.
-const char *SensorNames[] = { "BMP280", "DS18B20 (outside temp)", "Victron BLE" };
 
 // ********************** Status LED **************************
 // Heartbeat while running normally: 1 s on, 1 s off. Non-blocking (millis()
@@ -143,15 +141,18 @@ void nmeaInit() {
                                 75,      // Device class=Sensor Communication Interface. See codes on https://web.archive.org/web/20190531120557/https://www.nmea.org/Assets/20120726%20nmea%202000%20class%20&%20function%20codes%20v%202.00.pdf
                                 2040     // Just choosen free from code list on https://web.archive.org/web/20190529161431/http://www.nmea.org/Assets/20121020%20nmea%202000%20registration%20list.pdf
   );
-  // Uncomment 2 rows below to see, what device will send to bus. Use e.g. OpenSkipper or Actisense NMEA Reader
-  // NMEA2000.SetForwardStream(&Serial);
-  // // If you want to use simple ascii monitor like Arduino Serial Monitor, uncomment next line
-  // NMEA2000.SetForwardType(tNMEA2000::fwdt_Text); // Show in clear text. Leave uncommented for default Actisense format.
+  // Forward every message this node sends to Serial, in clear text, for debugging.
+  // Remove these two lines and set EnableForward(false) below for silent operation.
+  NMEA2000.SetForwardStream(&Serial);
+  NMEA2000.SetForwardType(tNMEA2000::fwdt_Text);  // fwdt_Actisense for OpenSkipper / Actisense NMEA Reader
 
   // If you also want to see all traffic on the bus use N2km_ListenAndNode instead of N2km_NodeOnly below
-  NMEA2000.SetMode(tNMEA2000::N2km_ListenAndNode, 22);
-  //NMEA2000.SetDebugMode(tNMEA2000::dm_Actisense); // Uncomment this, so you can test code without CAN bus chips on Arduino Mega
-  NMEA2000.EnableForward(false);  // Disable all msg forwarding to USB (=Serial)
+  NMEA2000.SetMode(tNMEA2000::N2km_NodeOnly, 22);
+  // dm_ClearText left off: the MCP2515 shield is physically wired (CS on D3 above), so we
+  // want the real CANOpen()/N2kCAN.begin() path to run rather than bypass it - debug mode
+  // skips chip init entirely, which left ParseMessages()'s receive-drain loop polling an
+  // uninitialized chip over SPI and hanging.
+  NMEA2000.EnableForward(true);  // Forward messages to USB (=Serial), see SetForwardStream above
   // Here we tell library, which PGNs we transmit
   NMEA2000.ExtendTransmitMessages(TransmitMessages);
   // Define OnOpen call back. This will be called, when CAN is open and system starts address claiming.
@@ -164,23 +165,16 @@ void nmeaInit() {
 void setup() {
   pinMode(LED_BUILTIN, OUTPUT);
   Serial.begin(115200);
-  while (!Serial) { 
-    delay(100);
-  } //wait until ready
+  // Wait up to 3 s for a USB serial monitor, then carry on without one -
+  // on the boat there is no host, and an unbounded wait would never start.
+  const uint32_t serialWaitStart = millis();
+  while (!Serial && millis() - serialWaitStart < 3000) {
+    delay(10);
+  }
   Serial.println("Arduino MKR Boat Sensors");
   
-  #if DEBUG_SERIAL_PRINT
-  Serial.println("DEBUG ON");
-  #endif 
-
   for (uint8_t i = 0; i < SensorCount; i++) {
     if (!Sensors[i]->setup()) {
-      
-      #if DEBUG_SERIAL_PRINT
-      Serial.print("[ErrorLoop] setup() failed for sensor: ");
-      Serial.println(SensorNames[i]);
-      #endif
-
       ErrorLoop();
     }
   }
@@ -198,23 +192,12 @@ void loop() {
   }
   BmpSid.update(bmp);
   OutsideSid.update(outsideTemp);
-  VictronSid.update(victronBattery);
+  // VictronSid.update(victronBattery);
   SendN2kMessages();  //send it NMEA bus various message on different schedule.
   NMEA2000.ParseMessages();
 }
 
-#if DEBUG_SERIAL_PRINT
-// N2kDoubleNA is a sentinel (-1e9), not NaN, so print "N/A" instead of the
-// raw sentinel value.
-void printN2kValue(double value, const char *unit) {
-  if (N2kIsNA(value)) {
-    Serial.print("N/A");
-  } else {
-    Serial.print(value);
-    Serial.print(unit);
-  }
-}
-#endif
+
 
 // *****************************************************************************
 void SendN2kMessages() {
@@ -232,14 +215,6 @@ void SendN2kMessages() {
     TemperatureScheduler.UpdateNextTime();
     SetN2kTemperatureExt(N2kMsg, BmpSid.sid(), 1, N2kts_MainCabinTemperature, cabinTemp);
     NMEA2000.SendMsg(N2kMsg);
-
-#if DEBUG_SERIAL_PRINT
-    Serial.print("[130316 MainCabinTemperature] SID=");
-    Serial.print(BmpSid.sid());
-    Serial.print(" ");
-    printN2kValue(cabinTemp, " K");
-    Serial.println();
-#endif
   }
 
   if (EnvironmentalScheduler.IsTime()) {
@@ -247,41 +222,18 @@ void SendN2kMessages() {
     SetN2kEnvironmentalParameters(N2kMsg, BmpSid.sid(), N2kts_MainCabinTemperature, cabinTemp,
                                    N2khs_Undef, N2kDoubleNA, pressure);
     NMEA2000.SendMsg(N2kMsg);
-#if DEBUG_SERIAL_PRINT
-    Serial.print("[130311 EnvironmentalParameters] SID=");
-    Serial.print(BmpSid.sid());
-    Serial.print(" temp=");
-    printN2kValue(cabinTemp, " K");
-    Serial.print(" pressure=");
-    printN2kValue(pressure, " Pa");
-    Serial.println();
-#endif
   }
 
   if (PressureScheduler.IsTime()) {
     PressureScheduler.UpdateNextTime();
     SetN2kPressure(N2kMsg, BmpSid.sid(), 1, N2kps_Atmospheric, pressure);
     NMEA2000.SendMsg(N2kMsg);
-#if DEBUG_SERIAL_PRINT
-    Serial.print("[130314 Pressure] SID=");
-    Serial.print(BmpSid.sid());
-    Serial.print(" ");
-    printN2kValue(pressure, " Pa");
-    Serial.println();
-#endif
   }
 
   if (OutsideTemperatureScheduler.IsTime()) {
     OutsideTemperatureScheduler.UpdateNextTime();
     SetN2kTemperatureExt(N2kMsg, OutsideSid.sid(), 2, N2kts_OutsideTemperature, outsideTempK);
     NMEA2000.SendMsg(N2kMsg);
-#if DEBUG_SERIAL_PRINT
-    Serial.print("[130316 OutsideTemperature] SID=");
-    Serial.print(OutsideSid.sid());
-    Serial.print(" ");
-    printN2kValue(outsideTempK, " K");
-    Serial.println();
-#endif
   }
 
   if (BatteryVoltageScheduler.IsTime()) {
@@ -290,20 +242,10 @@ void SendN2kMessages() {
     // temperature source instances used above, so it doesn't collide with them.
     SetN2kDCBatStatus(N2kMsg, 0, batteryVoltage, N2kDoubleNA, N2kDoubleNA, VictronSid.sid());
     NMEA2000.SendMsg(N2kMsg);
-#if DEBUG_SERIAL_PRINT
-    Serial.print("[127508 DCBatStatus] SID=");
-    Serial.print(VictronSid.sid());
-    Serial.print(" ");
-    printN2kValue(batteryVoltage, " V");
-    Serial.println();
-#endif
   }
 }
 
 void ErrorLoop() {
-  #if DEBUG_SERIAL_PRINT
-  Serial.println("Error in setup. reboot in 20 seconds");
-  #endif
   // Fast blink (100 ms on/off) then reboot rather than hang forever - for an
   // unattended sensor on a boat, rebooting beats going dark. This is the one
   // place the LED blocks: the device is about to reset, so there is no

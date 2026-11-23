@@ -50,7 +50,7 @@
 #define spi_readwrite      pSPI->transfer
 #define spi_read()         spi_readwrite(0x00)
 #define spi_write(spi_val) spi_readwrite(spi_val)
-#define SPI_BEGIN()        pSPI->beginTransaction(SPISettings(10000000, MSBFIRST, SPI_MODE0))
+#define SPI_BEGIN()        pSPI->beginTransaction(SPISettings(8000000, MSBFIRST, SPI_MODE0))
 #define SPI_END()          pSPI->endTransaction()
 
 /*********************************************************************************************************
